@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,28 +15,38 @@ type Daemon struct {
 }
 
 func DaemonNew(ctx context.Context, processFn func(), interval time.Duration) *Daemon {
-	return &Daemon{processFn: processFn}
+	return &Daemon{processFn: processFn, interval: interval}
 }
 
 func (daemon *Daemon) Run() {
-
-	daemon.listenExitSignal()
-}
-
-func (daemon *Daemon) listenExitSignal() {
-	signals := make(chan os.Signal)
+	go func() {
+		daemon.runProcessFn()
+	}()
+	// 退出信号
+	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGHUP, syscall.SIGTERM)
-	for {
-		select {
-		case <-signals:
-			return
-		}
-	}
+	<-signals
+	log.Println("wait for 15s before exiting.")
+	time.Sleep(time.Second * 15)
+	log.Println("exit now.")
 }
 
 func (daemon *Daemon) runProcessFn() {
-
+	if daemon.processFn == nil {
+		return
+	}
 	for {
-		daemon.processFn()
+		func() {
+			defer func() {
+				if err := recover(); err != nil {
+					log.Printf("panic %v", err)
+				}
+			}()
+			daemon.processFn()
+			if daemon.interval > 0 {
+				time.NewTimer(daemon.interval)
+				<-time.After(daemon.interval)
+			}
+		}()
 	}
 }
